@@ -1,103 +1,109 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+// We'll create this component in the next step
+import ProductList from '@/components/ProductList';
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm/6 text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2 tracking-[-.01em]">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-[family-name:var(--font-geist-mono)] font-semibold">
-              app/page.js
-            </code>
-            .
-          </li>
-          <li className="tracking-[-.01em]">
-            Save and see your changes instantly.
-          </li>
-        </ol>
+  const [searchQuery, setSearchQuery] = useState('');
+  const [products, setProducts] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:w-auto"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) return;
+
+    setIsLoading(true);
+    setError(null);
+    setProducts([]); // Clear previous products
+
+    try {
+      const response = await fetch(`/api/search?q=${encodeURIComponent(searchQuery)}`);
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        if (errorData.error === 'CAPTCHA_DETECTED') {
+          setError('Amazon is asking for a CAPTCHA. Please try again later or try a different search term.');
+        } else {
+          setError(errorData.message || `Error: ${response.status} ${response.statusText}`);
+        }
+        setProducts([]); // Ensure products are cleared on error
+        return;
+      }
+
+      const data = await response.json();
+      if (data && data.length > 0) {
+        setProducts(data);
+      } else if (data && data.products && data.products.length === 0) { // Handling the case where API returns { products: [] } for no results
+        setProducts([]);
+        setError('No products found for your query. Try a different search term.');
+      } else if (data && data.length === 0){
+        setProducts([]);
+        setError('No products found for your query. Try a different search term.');
+      }
+      else {
+        // If API returns an unexpected structure but success status
+        setProducts([]);
+        console.warn('API returned success but no products or unexpected format:', data);
+      }
+
+    } catch (err) {
+      console.error('Fetch error:', err);
+      setError(err.message || 'Failed to fetch products. Please check your connection or try again.');
+      setProducts([]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gray-100 py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-3xl mx-auto">
+        <header className="mb-8 text-center">
+          <h1 className="text-4xl font-bold text-gray-800">Amazon Product Search</h1>
+        </header>
+
+        <div className="mb-8 flex">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search for products on Amazon..."
+            className="flex-grow p-3 border border-gray-300 rounded-l-md focus:ring-indigo-500 focus:border-indigo-500"
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          />
+          <button
+            onClick={handleSearch}
+            disabled={isLoading}
+            className="bg-indigo-600 text-white px-6 py-3 rounded-r-md hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 disabled:bg-gray-400 transition-colors"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent font-medium text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 w-full sm:w-auto md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            {isLoading ? 'Searching...' : 'Search'}
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-[24px] flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+
+        {isLoading && <p className="text-center text-gray-600 text-lg">Loading products, please wait...</p>}
+
+        {error && (
+          <div className="text-center text-red-600 bg-red-100 p-4 rounded-md mb-6">
+            <p className="font-semibold">Error:</p>
+            <p>{error}</p>
+          </div>
+        )}
+
+        {!isLoading && !error && products.length === 0 && searchQuery && (
+           <p className="text-center text-gray-500">
+             No products found for "{searchQuery}". Try a different query or check for typos.
+           </p>
+        )}
+
+        {!isLoading && products.length > 0 && (
+          <ProductList products={products} />
+        )}
+
+        {!isLoading && !error && products.length === 0 && !searchQuery && (
+          <p className="text-center text-gray-500">Enter a search term above to find products on Amazon.</p>
+        )}
+      </div>
     </div>
   );
 }
