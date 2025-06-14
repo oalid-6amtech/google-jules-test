@@ -1,5 +1,6 @@
 import puppeteer from 'puppeteer';
 import { NextResponse } from 'next/server';
+import fs from 'fs';
 
 // Helper function for random delays
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -70,6 +71,10 @@ export async function GET(request) {
     }
 
     console.log('Page loaded, attempting to scrape products...');
+    // store content in a html file
+    let pageContentHtml = await page.content();
+    await fs.promises.writeFile('amazon_search_page.html', pageContentHtml);
+
     const products = await page.evaluate(() => {
       // 5. Refine Error Handling for Scraping (within page.evaluate)
       const productElements = Array.from(document.querySelectorAll('div[data-component-type="s-search-result"]')).slice(0, 5); // Limit to 5
