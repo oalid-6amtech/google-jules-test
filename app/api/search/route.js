@@ -49,70 +49,44 @@ export async function GET(request) {
 
     if (foundCaptcha) {
       console.warn('[Scrape CAPTCHA] CAPTCHA detected on page.');
+      // await page.screenshot({ path: 'captcha_detected_screenshot.png' });
       return NextResponse.json({ error: 'CAPTCHA_DETECTED', message: 'Amazon is requesting a CAPTCHA. Please try again later or manually.' }, { status: 503 });
     }
 
+    // Updated waitForSelector logic
+    const mainProductSelector = 'div.s-result-item[data-asin]';
     try {
-      await page.waitForSelector('div[data-component-type="s-search-result"]', { timeout: 15000 });
+      console.log(`[Scrape Wait] Waiting for main product selector '${mainProductSelector}'...`);
+      await page.waitForSelector(mainProductSelector, { timeout: 20000 }); // Increased timeout
+      console.log(`[Scrape Wait] Main product selector '${mainProductSelector}' found.`);
     } catch (e) {
-      console.warn("[Scrape Selector] Main search result selector 'div[data-component-type=\"s-search-result\"]' not found. Page might not have loaded results as expected or structure changed.");
-      return NextResponse.json({ error: 'Failed to find search results container. Amazon page structure might have changed.', products: [] }, { status: 200 });
+      console.warn(`[Scrape Wait] Timeout or error waiting for main product selector '${mainProductSelector}'. Page might not have loaded results as expected or structure changed. Error: ${e.message}`);
+      // await page.screenshot({ path: 'debug_no_main_selector_found.png' });
+      // No need to close browser here, finally block will handle it.
+      return NextResponse.json({ error: `Failed to find search results container ('${mainProductSelector}'). Amazon page structure might have changed.`, products: [] }, { status: 200 });
     }
 
     console.log('[Scrape Eval] Page loaded, attempting to scrape products...');
-    const products = await page.evaluate(() => {
-      const productContainerSelector = 'div[data-component-type="s-search-result"]';
-      const productElementsAll = Array.from(document.querySelectorAll(productContainerSelector));
-      // Log initial count of found containers
-      console.log(`[Eval] Found ${productElementsAll.length} raw product container elements using selector '${productContainerSelector}'.`);
+    const products = await page.evaluate((passedMainSelector) => {
+      const productElementsAll = Array.from(document.querySelectorAll(passedMainSelector));
+      console.log(`[Eval] Found ${productElementsAll.length} raw product container elements using selector '${passedMainSelector}'.`);
 
-      const productElements = productElementsAll.slice(0, 5); // Limit to 5 for processing
+      const productElements = productElementsAll.slice(0, 5);
       console.log(`[Eval] Processing up to ${productElements.length} product elements.`);
       const results = [];
 
       productElements.forEach((el, index) => {
         console.log(`[Eval Item ${index}] --- Start Processing Product Element #${index} ---`);
-        // Log a sample of outerHTML if a critical piece of info is missing later, or for the first item
-        if (index === 0) {
-            console.log(`[Eval Item ${index}] OuterHTML sample (first 500 chars): ${el.outerHTML.substring(0, 500)}`);
+        if (index < 2) { // Log outerHTML for the first two items for structure review
+            console.log(`[Eval Item ${index}] OuterHTML sample (first 600 chars): ${el.outerHTML.substring(0, 600)}`);
         }
 
         let name = null, imageUrl = null, price = null, productUrl = null;
 
         try {
-          // Product Name
-          const nameSelector = 'h2 a.a-link-normal span.a-text-normal';
-          const nameElement = el.querySelector(nameSelector);
-          if (nameElement) {
-            name = nameElement.textContent.trim();
-            console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') found. Extracted name: "${name}"`);
-          } else {
-            console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') FAILED.`);
-            // console.log(`[Eval Item ${index}] OuterHTML for failed name: ${el.outerHTML.substring(0, 500)}`); // Log if name is critical and missing
-          }
-
-          // Product Image URL
-          const imageSelector = 'img.s-image';
-          const imageElement = el.querySelector(imageSelector);
-          if (imageElement) {
-            imageUrl = imageElement.src;
-            console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') found. Extracted imageUrl: "${imageUrl}"`);
-          } else {
-            console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') FAILED.`);
-          }
-
-          // Product Price
-          const priceSelector = '.a-price .a-offscreen';
-          const priceElement = el.querySelector(priceSelector);
-          if (priceElement) {
-            price = priceElement.textContent.trim();
-            console.log(`[Eval Item ${index}] Price selector ('${priceSelector}') found. Extracted price: "${price}"`);
-          } else {
-            console.log(`[Eval Item ${index}] Price selector ('${priceSelector}') FAILED.`);
-          }
-
-          // Product Page Link
-          const linkSelector = 'h2 a.a-link-normal';
+          // Product Link (Primary source for URL, can also help find Name)
+          // Adjusted to look for a link within a title structure, common in cards
+          const linkSelector = "a.a-link-normal.s-no-outline, div[data-cy='title-recipe'] a.a-link-normal, .s-product-image-container a.s-no-outline"; // Try a few common patterns for the main product link
           const linkElement = el.querySelector(linkSelector);
           if (linkElement) {
             let href = linkElement.getAttribute('href');
@@ -125,31 +99,66 @@ export async function GET(request) {
             console.log(`[Eval Item ${index}] Link selector ('${linkSelector}') FAILED.`);
           }
 
+          // Product Name
+          // Using a more specific selector based on data-cy and typical heading structure
+          const nameSelector = "div[data-cy='title-recipe'] h2 span, span.a-size-medium.a-color-base.a-text-normal, h2.a-size-mini.a-spacing-none.a-color-base span.a-text-normal"; // Common name patterns
+          const nameElement = el.querySelector(nameSelector);
+          if (nameElement) {
+            name = nameElement.textContent.trim();
+            console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') found. Extracted name: "${name}"`);
+          } else {
+            console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') FAILED.`);
+          }
+
+          // Product Image URL
+          const imageSelector = 'img.s-image'; // This one is often stable
+          const imageElement = el.querySelector(imageSelector);
+          if (imageElement) {
+            imageUrl = imageElement.src;
+            console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') found. Extracted imageUrl: "${imageUrl}"`);
+          } else {
+            console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') FAILED.`);
+          }
+
+          // Product Price
+          // Using a more specific selector based on data-cy
+          const priceSelector = "div[data-cy='price-recipe'] span.a-offscreen, span.a-price span.a-offscreen"; // Common price patterns
+          const priceElement = el.querySelector(priceSelector);
+          if (priceElement) {
+            price = priceElement.textContent.trim();
+            console.log(`[Eval Item ${index}] Price selector ('${priceSelector}') found. Extracted price: "${price}"`);
+          } else {
+            console.log(`[Eval Item ${index}] Price selector ('${priceSelector}') FAILED.`);
+          }
+
           if (name && imageUrl && price && productUrl) {
             results.push({ name, imageUrl, price, url: productUrl });
             console.log(`[Eval Item ${index}] Added product to results: "${name}"`);
           } else {
             console.warn(`[Eval Item ${index}] Skipped product element due to missing critical data. Name: ${!!name}, Image: ${!!imageUrl}, Price: ${!!price}, URL: ${!!productUrl}`);
-            if (!name) console.log(`[Eval Item ${index}] OuterHTML for element missing name (first 500 chars): ${el.outerHTML.substring(0,500)}`);
-
+            if (index < 2 || !name || !imageUrl || !price || !productUrl) { // Log more details for initial items or if anything is missing
+                 console.log(`[Eval Item ${index}] Detailed HTML for skipped/incomplete item (first 600 chars): ${el.outerHTML.substring(0,600)}`);
+            }
           }
         } catch (e) {
-          console.error(`[Eval Item ${index}] EXCEPTION while processing product element: ${e.message}. Element HTML (first 500 chars): ${el.outerHTML.substring(0,500)}`, e.stack);
+          console.error(`[Eval Item ${index}] EXCEPTION while processing product element: ${e.message}. Element HTML (first 600 chars): ${el.outerHTML.substring(0,600)}`, e.stack);
         }
         console.log(`[Eval Item ${index}] --- End Processing Product Element #${index} ---`);
       });
       return results;
-    });
+    }, mainProductSelector); // Pass mainProductSelector to page.evaluate
 
     console.log(`[Scrape Result] Scraped ${products.length} products successfully.`);
     if (products.length === 0) {
       console.warn(`[Scrape Result] No products extracted for query: ${searchQuery}. This could be due to page structure changes, no actual results, or CAPTCHA-like interference not caught by basic check.`);
+      // await page.screenshot({ path: 'debug_no_products_extracted.png' });
     }
 
     return NextResponse.json(products, { status: 200 });
 
   } catch (error) {
     console.error('[Scrape Error] Overall error during scraping pipeline:', error);
+    // if (page) { await page.screenshot({ path: 'error_screenshot.png' }); }
     return NextResponse.json({ error: 'Failed to scrape products', details: error.message }, { status: 500 });
   } finally {
     if (browser) {
