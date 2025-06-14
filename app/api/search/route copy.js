@@ -1,6 +1,5 @@
 import puppeteer from 'puppeteer';
 import { NextResponse } from 'next/server';
-import fs from 'fs';
 
 // Helper function for random delays
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -54,10 +53,8 @@ export async function GET(request) {
       return NextResponse.json({ error: 'CAPTCHA_DETECTED', message: 'Amazon is requesting a CAPTCHA. Please try again later or manually.' }, { status: 503 });
     }
 
-    //save page content for debugging
-    fs.writeFileSync('debug_page_content.html', pageContent, 'utf8');
     // Updated waitForSelector logic
-    const mainProductSelector = 'div[role=listitem]';
+    const mainProductSelector = 'div.s-result-item[data-asin]';
     try {
       console.log(`[Scrape Wait] Waiting for main product selector '${mainProductSelector}'...`);
       await page.waitForSelector(mainProductSelector, { timeout: 20000 }); // Increased timeout
@@ -104,21 +101,20 @@ export async function GET(request) {
 
           // Product Name
           // Using a more specific selector based on data-cy and typical heading structure
-          /* const nameSelector = "div[data-cy='title-recipe'] h2 span, span.a-size-medium.a-color-base.a-text-normal, h2.a-size-mini.a-spacing-none.a-color-base span.a-text-normal"; // Common name patterns
+          const nameSelector = "div[data-cy='title-recipe'] h2 span, span.a-size-medium.a-color-base.a-text-normal, h2.a-size-mini.a-spacing-none.a-color-base span.a-text-normal"; // Common name patterns
           const nameElement = el.querySelector(nameSelector);
           if (nameElement) {
             name = nameElement.textContent.trim();
             console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') found. Extracted name: "${name}"`);
           } else {
             console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') FAILED.`);
-          } */
+          }
 
           // Product Image URL
           const imageSelector = 'img.s-image'; // This one is often stable
           const imageElement = el.querySelector(imageSelector);
           if (imageElement) {
             imageUrl = imageElement.src;
-            name = imageElement.alt || imageElement.title || imageElement.getAttribute('aria-label') || name; // Fallback to alt/title/aria-label if name is not found
             console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') found. Extracted imageUrl: "${imageUrl}"`);
           } else {
             console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') FAILED.`);
