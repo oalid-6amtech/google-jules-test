@@ -1,6 +1,5 @@
 import puppeteer from 'puppeteer';
 import { NextResponse } from 'next/server';
-import fs from 'fs';
 
 // Helper function for random delays
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
@@ -15,10 +14,10 @@ export async function GET(request) {
   }
 
   let browser = null;
-  let page = null; // Define page here to access in finally for screenshots if needed
+  let page = null;
 
   try {
-    console.log(`Launching browser for search: ${searchQuery}`);
+    console.log(`[Scrape Start] Launching browser for search: ${searchQuery}`);
     browser = await puppeteer.launch({
       headless: true,
       args: [
@@ -29,113 +28,136 @@ export async function GET(request) {
         '--no-first-run',
         '--no-zygote',
         '--disable-gpu',
-        // Consider '--single-process' only for debugging if issues persist
       ],
     });
     page = await browser.newPage();
 
-    // 1. Set Realistic User-Agent
     await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/98.0.4758.102 Safari/537.36');
-
-    // 3. Improve Viewport Settings
     await page.setViewport({ width: 1920, height: 1080 });
 
     const amazonUrl = `https://www.amazon.com/s?k=${encodeURIComponent(searchQuery)}`;
 
-    // 2. Introduce Random Delay
-    console.log('Applying random delay before navigation...');
+    console.log('[Scrape Nav] Applying random delay before navigation...');
     await randomDelay();
 
-    console.log(`Navigating to: ${amazonUrl}`);
+    console.log(`[Scrape Nav] Navigating to: ${amazonUrl}`);
     await page.goto(amazonUrl, { waitUntil: 'networkidle2', timeout: 60000 });
 
-    // 4. Handle CAPTCHAs (Detection Only)
     const captchaKeywords = ['captcha', 'enter the characters you see below', 'api.amazon.com/captcha'];
     const pageContent = await page.content();
     const foundCaptcha = captchaKeywords.some(keyword => pageContent.toLowerCase().includes(keyword));
 
     if (foundCaptcha) {
-      console.warn('CAPTCHA detected on page.');
-      // await page.screenshot({ path: 'captcha_detected_screenshot.png' }); // For debugging
+      console.warn('[Scrape CAPTCHA] CAPTCHA detected on page.');
       return NextResponse.json({ error: 'CAPTCHA_DETECTED', message: 'Amazon is requesting a CAPTCHA. Please try again later or manually.' }, { status: 503 });
     }
 
-    // Wait for search results to ensure page is loaded (selector might need adjustment)
     try {
-      await page.waitForSelector('div[data-component-type="s-search-result"]', { timeout: 15000 }); // Increased timeout slightly
+      await page.waitForSelector('div[data-component-type="s-search-result"]', { timeout: 15000 });
     } catch (e) {
-      console.warn("Main search result selector 'div[data-component-type=\"s-search-result\"]' not found after CAPTCHA check. Page might not have loaded results as expected or structure changed.");
-      // await page.screenshot({ path: 'debug_no_search_results_selector.png' });
-      // Return empty or specific error if this selector is crucial
+      console.warn("[Scrape Selector] Main search result selector 'div[data-component-type=\"s-search-result\"]' not found. Page might not have loaded results as expected or structure changed.");
       return NextResponse.json({ error: 'Failed to find search results container. Amazon page structure might have changed.', products: [] }, { status: 200 });
     }
 
-    console.log('Page loaded, attempting to scrape products...');
-    // store content in a html file
-    let pageContentHtml = await page.content();
-    await fs.promises.writeFile('amazon_search_page.html', pageContentHtml);
-
+    console.log('[Scrape Eval] Page loaded, attempting to scrape products...');
     const products = await page.evaluate(() => {
-      // 5. Refine Error Handling for Scraping (within page.evaluate)
-      const productElements = Array.from(document.querySelectorAll('div[data-component-type="s-search-result"]')).slice(0, 5); // Limit to 5
+      const productContainerSelector = 'div[data-component-type="s-search-result"]';
+      const productElementsAll = Array.from(document.querySelectorAll(productContainerSelector));
+      // Log initial count of found containers
+      console.log(`[Eval] Found ${productElementsAll.length} raw product container elements using selector '${productContainerSelector}'.`);
+
+      const productElements = productElementsAll.slice(0, 5); // Limit to 5 for processing
+      console.log(`[Eval] Processing up to ${productElements.length} product elements.`);
       const results = [];
 
-      productElements.forEach(el => {
+      productElements.forEach((el, index) => {
+        console.log(`[Eval Item ${index}] --- Start Processing Product Element #${index} ---`);
+        // Log a sample of outerHTML if a critical piece of info is missing later, or for the first item
+        if (index === 0) {
+            console.log(`[Eval Item ${index}] OuterHTML sample (first 500 chars): ${el.outerHTML.substring(0, 500)}`);
+        }
+
+        let name = null, imageUrl = null, price = null, productUrl = null;
+
         try {
-          const nameElement = el.querySelector('h2 a.a-link-normal span.a-text-normal');
-          const imageElement = el.querySelector('img.s-image');
-          const priceElement = el.querySelector('.a-price .a-offscreen');
-          const linkElement = el.querySelector('h2 a.a-link-normal');
-
-          const name = nameElement ? nameElement.textContent.trim() : null;
-          const imageUrl = imageElement ? imageElement.src : null;
-          const price = priceElement ? priceElement.textContent.trim() : null;
-          let productUrl = linkElement ? linkElement.getAttribute('href') : null;
-
-          if (productUrl && !productUrl.startsWith('http')) {
-            productUrl = `https://www.amazon.com${productUrl}`;
+          // Product Name
+          const nameSelector = 'h2 a.a-link-normal span.a-text-normal';
+          const nameElement = el.querySelector(nameSelector);
+          if (nameElement) {
+            name = nameElement.textContent.trim();
+            console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') found. Extracted name: "${name}"`);
+          } else {
+            console.log(`[Eval Item ${index}] Name selector ('${nameSelector}') FAILED.`);
+            // console.log(`[Eval Item ${index}] OuterHTML for failed name: ${el.outerHTML.substring(0, 500)}`); // Log if name is critical and missing
           }
 
-          // Only add if core elements are found
+          // Product Image URL
+          const imageSelector = 'img.s-image';
+          const imageElement = el.querySelector(imageSelector);
+          if (imageElement) {
+            imageUrl = imageElement.src;
+            console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') found. Extracted imageUrl: "${imageUrl}"`);
+          } else {
+            console.log(`[Eval Item ${index}] Image selector ('${imageSelector}') FAILED.`);
+          }
+
+          // Product Price
+          const priceSelector = '.a-price .a-offscreen';
+          const priceElement = el.querySelector(priceSelector);
+          if (priceElement) {
+            price = priceElement.textContent.trim();
+            console.log(`[Eval Item ${index}] Price selector ('${priceSelector}') found. Extracted price: "${price}"`);
+          } else {
+            console.log(`[Eval Item ${index}] Price selector ('${priceSelector}') FAILED.`);
+          }
+
+          // Product Page Link
+          const linkSelector = 'h2 a.a-link-normal';
+          const linkElement = el.querySelector(linkSelector);
+          if (linkElement) {
+            let href = linkElement.getAttribute('href');
+            if (href && !href.startsWith('http')) {
+              href = `https://www.amazon.com${href}`;
+            }
+            productUrl = href;
+            console.log(`[Eval Item ${index}] Link selector ('${linkSelector}') found. Extracted productUrl: "${productUrl}"`);
+          } else {
+            console.log(`[Eval Item ${index}] Link selector ('${linkSelector}') FAILED.`);
+          }
+
           if (name && imageUrl && price && productUrl) {
             results.push({ name, imageUrl, price, url: productUrl });
+            console.log(`[Eval Item ${index}] Added product to results: "${name}"`);
           } else {
-            // Log if a product-like element is missing crucial info
-            console.warn('Skipping a product element due to missing name, image, price, or URL.');
+            console.warn(`[Eval Item ${index}] Skipped product element due to missing critical data. Name: ${!!name}, Image: ${!!imageUrl}, Price: ${!!price}, URL: ${!!productUrl}`);
+            if (!name) console.log(`[Eval Item ${index}] OuterHTML for element missing name (first 500 chars): ${el.outerHTML.substring(0,500)}`);
+
           }
         } catch (e) {
-          // Log error for a specific product element but continue with others
-          console.error('Error processing a product element:', e.message);
+          console.error(`[Eval Item ${index}] EXCEPTION while processing product element: ${e.message}. Element HTML (first 500 chars): ${el.outerHTML.substring(0,500)}`, e.stack);
         }
+        console.log(`[Eval Item ${index}] --- End Processing Product Element #${index} ---`);
       });
       return results;
     });
 
-    console.log(`Scraped ${products.length} products successfully.`);
+    console.log(`[Scrape Result] Scraped ${products.length} products successfully.`);
     if (products.length === 0) {
-      console.warn(`No products extracted for query: ${searchQuery}. This could be due to page structure changes, no results, or CAPTCHA-like interference not caught by basic check.`);
-      // await page.screenshot({ path: 'debug_no_products_extracted.png' });
+      console.warn(`[Scrape Result] No products extracted for query: ${searchQuery}. This could be due to page structure changes, no actual results, or CAPTCHA-like interference not caught by basic check.`);
     }
 
     return NextResponse.json(products, { status: 200 });
 
   } catch (error) {
-    console.error('Error during scraping:', error);
-    // if (page) { // Ensure page is defined before trying to take a screenshot
-    //   try {
-    //     await page.screenshot({ path: 'error_screenshot.png' });
-    //   } catch (ssError) {
-    //     console.error('Failed to take error screenshot:', ssError);
-    //   }
-    // }
+    console.error('[Scrape Error] Overall error during scraping pipeline:', error);
     return NextResponse.json({ error: 'Failed to scrape products', details: error.message }, { status: 500 });
   } finally {
     if (browser) {
-      console.log('Closing browser...');
+      console.log('[Scrape End] Closing browser...');
       try {
         await browser.close();
       } catch (closeError) {
-        console.error('Error closing browser:', closeError);
+        console.error('[Scrape Error] Error closing browser:', closeError);
       }
     }
   }
